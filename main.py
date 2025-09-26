@@ -163,7 +163,8 @@ def get_churn_prediction():
             COUNT(cliente_id) AS total_pedidos,
             AVG(valor_total) AS valor_medio,
             MAX(created_at) AS ultimo_pedido_data,
-            EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) / 86400 / NULLIF(COUNT(id) - 1, 0) AS freq_media_dias,
+            -- CORREÇÃO: Usar COUNT(cliente_id) que está disponível no contexto
+            EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) / 86400 / NULLIF(COUNT(cliente_id) - 1, 0) AS freq_media_dias,
             MAX(CASE WHEN rn = 1 THEN valor_total ELSE NULL END) as valor_ultimo_pedido
         FROM ranked_orders
         GROUP BY cliente_id
