@@ -13,13 +13,15 @@ app = FastAPI()
 
 # Função para conectar ao banco de dados (a nossa "despensa")
 def get_db_connection():
-    conn = psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD")
-    )
-    return conn
+    try:
+        # A MUDANÇA ESTÁ AQUI: vamos usar a string de conexão completa com a porta 6543
+        conn_string = f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:6543/{os.getenv('DB_NAME')}"
+        conn = psycopg2.connect(conn_string)
+        return conn
+    except Exception as e:
+        # Adicionamos um print para vermos o erro nos logs do EasyPanel
+        print(f"ERRO DE CONEXÃO PELA PORTA 6543: {e}")
+        raise e # Lança a exceção para que o FastAPI mostre o erro corretamente
 
 # A primeira receita: um endpoint de teste.
 # Quando alguém for na URL principal "/", esta função é executada.
@@ -47,4 +49,5 @@ def get_clientes():
         return {"clientes": clientes}
     except Exception as e:
         # Se algo der errado, retorna uma mensagem de erro clara.
+
         return {"erro": f"Não foi possível conectar ou buscar no banco de dados: {e}"}
