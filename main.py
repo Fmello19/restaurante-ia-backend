@@ -29,12 +29,11 @@ load_dotenv()
 
 class Settings:
     """Configurações centralizadas da aplicação"""
-    # Database
-    DB_USER: str = os.getenv('DB_USER')
-    DB_PASSWORD: str = os.getenv('DB_PASSWORD')
-    DB_HOST: str = os.getenv('DB_HOST')
-    DB_NAME: str = os.getenv('DB_NAME')
-    DB_PORT: int = int(os.getenv('DB_PORT', '6543'))
+    # Database - Para Supabase
+    DB_HOST: str = os.getenv('DB_HOST')  # Connection string completa do Supabase
+    DB_NAME: str = os.getenv('DB_NAME', 'postgres')
+    DB_USER: str = os.getenv('DB_USER', 'postgres')
+    DB_PASSWORD: str = os.getenv('DB_PASSWORD', '')
     
     # Pool de Conexões
     DB_POOL_MIN_SIZE: int = int(os.getenv('DB_POOL_MIN_SIZE', '10'))
@@ -57,7 +56,7 @@ class Settings:
     
     def validate(self):
         """Valida se todas as configurações necessárias estão presentes"""
-        required = ['DB_USER', 'DB_PASSWORD', 'DB_HOST', 'DB_NAME']
+        required = ['DB_HOST']  # Só precisa validar DB_HOST para Supabase
         missing = [var for var in required if not getattr(self, var)]
         if missing:
             raise ValueError(f"Variáveis de ambiente obrigatórias faltando: {missing}")
@@ -173,17 +172,15 @@ class DatabasePool:
         """Inicializa o pool de conexões"""
         if self._pool is None:
             try:
+                # Para Supabase, usa a connection string completa do DB_HOST
                 self._pool = await asyncpg.create_pool(
-                    host=settings.DB_HOST,
-                    port=settings.DB_PORT,
-                    database=settings.DB_NAME,
-                    user=settings.DB_USER,
-                    password=settings.DB_PASSWORD,
+                    settings.DB_HOST,  # Usa direto pois já vem formatado do Supabase
                     min_size=settings.DB_POOL_MIN_SIZE,
                     max_size=settings.DB_POOL_MAX_SIZE,
-                    command_timeout=60
+                    command_timeout=60,
+                    ssl='require'  # Supabase requer SSL
                 )
-                logger.info(f"✅ Pool de conexões criado: min={settings.DB_POOL_MIN_SIZE}, max={settings.DB_POOL_MAX_SIZE}")
+                logger.info(f"✅ Pool de conexões Supabase criado: min={settings.DB_POOL_MIN_SIZE}, max={settings.DB_POOL_MAX_SIZE}")
             except Exception as e:
                 logger.error(f"❌ Erro ao criar pool de conexões: {e}")
                 raise
