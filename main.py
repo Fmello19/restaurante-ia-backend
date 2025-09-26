@@ -192,13 +192,15 @@ class DatabasePool:
                 # Usa a connection string construída
                 connection_string = settings.get_connection_string()
                 
+                # IMPORTANTE: statement_cache_size=0 é necessário para Supabase/pgbouncer
                 self._pool = await asyncpg.create_pool(
                     connection_string,
                     min_size=settings.DB_POOL_MIN_SIZE,
                     max_size=settings.DB_POOL_MAX_SIZE,
-                    command_timeout=60
+                    command_timeout=60,
+                    statement_cache_size=0  # Desabilita cache de statements para compatibilidade com pgbouncer
                 )
-                logger.info(f"✅ Pool de conexões criado: min={settings.DB_POOL_MIN_SIZE}, max={settings.DB_POOL_MAX_SIZE}")
+                logger.info(f"✅ Pool de conexões criado (Supabase/pgbouncer): min={settings.DB_POOL_MIN_SIZE}, max={settings.DB_POOL_MAX_SIZE}")
             except Exception as e:
                 logger.error(f"❌ Erro ao criar pool de conexões: {e}")
                 raise
