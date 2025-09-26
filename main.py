@@ -211,10 +211,8 @@ def get_market_basket_analysis():
     Realiza a Análise de Cesta de Mercado para encontrar associações de produtos.
     Retorna pares de produtos com as métricas de Suporte, Confiança e Lift.
     """
-    # Esta query é o coração da análise.
     query = """
     WITH 
-    -- 1. Contar a frequência de cada item individualmente
     item_counts AS (
         SELECT
             nome_produto,
@@ -222,7 +220,6 @@ def get_market_basket_analysis():
         FROM "Itens_Pedido"
         GROUP BY nome_produto
     ),
-    -- 2. Encontrar pares de itens que aparecem no mesmo pedido
     pair_counts AS (
         SELECT
             i1.nome_produto AS item_a,
@@ -232,33 +229,27 @@ def get_market_basket_analysis():
         JOIN "Itens_Pedido" i2 ON i1.pedido_id = i2.pedido_id AND i1.nome_produto < i2.nome_produto
         GROUP BY i1.nome_produto, i2.nome_produto
     ),
-    -- 3. Contar o total de pedidos no período (ex: últimos 90 dias)
     total_orders AS (
         SELECT COUNT(DISTINCT id) AS total_geral_pedidos
         FROM "Pedidos_Unificados"
         WHERE created_at > NOW() - INTERVAL '90 days'
     )
-    -- 4. Calcular as métricas finais
     SELECT
         pc.item_a,
         pc.item_b,
         pc.total_pedidos_com_par,
-        -- Suporte: Quão frequente é o par em todos os pedidos?
         (pc.total_pedidos_com_par::float / NULLIF(to.total_geral_pedidos, 0)) AS suporte,
-        -- Confiança: Se comprou A, qual a chance de comprar B?
         (pc.total_pedidos_com_par::float / NULLIF(ic_a.total_pedidos_com_item, 0)) AS confianca_a_b,
-        -- Lift: A compra de A aumenta a probabilidade de comprar B?
-        ((pc.total_pedidos_com_par::float / NULLIF(to.total_geral_pedidos, 0)) / 
-         (NULLIF(ic_a.total_pedidos_com_item, 0)::float / NULLIF(to.total_geral_pedidos, 0)) *
-         (NULLIF(ic_b.total_pedidos_com_item, 0)::float / NULLIF(to.total_geral_pedidos, 0))) AS lift
+        -- Fórmula do Lift simplificada e corrigida para evitar erros de precedência e sintaxe
+        (pc.total_pedidos_com_par::float * to.total_geral_pedidos) / 
+            NULLIF((ic_a.total_pedidos_com_item::float * ic_b.total_pedidos_com_item::float), 0) AS lift
     FROM pair_counts pc
     JOIN item_counts ic_a ON pc.item_a = ic_a.nome_produto
     JOIN item_counts ic_b ON pc.item_b = ic_b.nome_produto
     CROSS JOIN total_orders to
-    -- Filtramos para resultados mais relevantes para evitar ruído
-    WHERE pc.total_pedidos_com_par > 1 -- O par precisa ter aparecido mais de uma vez
+    WHERE pc.total_pedidos_com_par > 1
     ORDER BY lift DESC, confianca_a_b DESC
-    LIMIT 50; -- Retorna os 50 pares mais interessantes
+    LIMIT 50;
     """
     conn = get_db_connection()
     try:
