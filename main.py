@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz # Para lidar com fusos horários
 
 # Carrega as variáveis de ambiente (segredos como a senha do banco)
@@ -55,39 +55,86 @@ def get_clientes():
         if conn:
             conn.close()
 
-# --- NOVA RECEITA: DASHBOARD DO DIA ---
+# --- NOVAS RECEITAS: DASHBOARDS HISTÓRICOS ---
+
+def calcular_metricas_periodo(inicio_periodo, fim_periodo):
+    """
+    Função reutilizável para calcular métricas em um intervalo de tempo específico.
+    """
+    query = """
+        SELECT
+            COALESCE(SUM(valor_total), 0)::float AS faturamento_total,
+            COUNT(id) AS total_pedidos,
+            COALESCE(AVG(valor_total), 0)::float AS ticket_medio,
+            COUNT(DISTINCT cliente_id) AS clientes_unicos
+        FROM "Pedidos_Unificados"
+        WHERE created_at >= %s AND created_at < %s;
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Passando os parâmetros de forma segura para evitar SQL Injection
+            cursor.execute(query, (inicio_periodo, fim_periodo))
+            dados = cursor.fetchone()
+        return dados
+    finally:
+        if conn:
+            conn.close()
 
 @app.get("/dashboard/hoje")
 def get_dashboard_hoje():
     """
     Calcula e retorna as métricas principais para o dia atual (de 00:00 até agora).
-    Usa o fuso horário de São Paulo para definir o que é "hoje".
+    Usa o fuso horário de São Paulo.
     """
-    query = """
-    WITH hoje_bounds AS (
-        SELECT
-            date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') AS inicio_dia,
-            now() AT TIME ZONE 'America/Sao_Paulo' AS agora
-    )
-    SELECT
-        COALESCE(SUM(valor_total), 0)::float AS faturamento_total,
-        COUNT(id) AS total_pedidos,
-        COALESCE(AVG(valor_total), 0)::float AS ticket_medio,
-        COUNT(DISTINCT cliente_id) AS clientes_unicos
-    FROM "Pedidos_Unificados", hoje_bounds
-    WHERE created_at >= (inicio_dia AT TIME ZONE 'America/Sao_Paulo')
-      AND created_at <= (agora AT TIME ZONE 'America/Sao_Paulo');
-    """
-    conn = get_db_connection()
+    tz_sp = pytz.timezone('America/Sao_Paulo')
+    agora_sp = datetime.now(tz_sp)
+    inicio_dia_sp = agora_sp.replace(hour=0, minute=0, second=0, microsecond=0)
+
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(query)
-            # fetchone() pega a única linha de resultado da nossa query
-            dados_hoje = cursor.fetchone()
-        return dados_hoje
+        metricas_hoje = calcular_metricas_periodo(inicio_dia_sp, agora_sp)
+        
+        # Adiciona um comparativo com o dia anterior
+        ontem_fim = inicio_dia_sp
+        ontem_inicio = ontem_fim - timedelta(days=1)
+        metricas_ontem = calcular_metricas_periodo(ontem_inicio, ontem_fim)
+
+        return {
+            "hoje": metricas_hoje,
+            "comparativo_ontem": metricas_ontem
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao calcular métricas do dia: {e}")
-    finally:
-        if conn:
-            conn.close()
+
+
+@app.get("/dashboard/semana")
+def get_dashboard_semana():
+    """
+    Calcula as métricas para a semana atual (de segunda-feira até agora).
+    """
+    tz_sp = pytz.timezone('America/Sao_Paulo')
+    agora_sp = datetime.now(tz_sp)
+    # weekday() retorna 0 para segunda, 1 para terça...
+    dias_para_subtrair = agora_sp.weekday()
+    inicio_semana = (agora_sp - timedelta(days=dias_para_subtrair)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        return calcular_metricas_periodo(inicio_semana, agora_sp)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao calcular métricas da semana: {e}")
+
+
+@app.get("/dashboard/mes")
+def get_dashboard_mes():
+    """
+    Calcula as métricas para o mês atual (do dia 1º até agora).
+    """
+    tz_sp = pytz.timezone('America/Sao_Paulo')
+    agora_sp = datetime.now(tz_sp)
+    inicio_mes = agora_sp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        return calcular_metricas_periodo(inicio_mes, agora_sp)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao calcular métricas do mês: {e}")
 
