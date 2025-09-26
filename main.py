@@ -145,18 +145,27 @@ def get_churn_prediction():
     Calcula o risco de churn para todos os clientes com 2 ou mais pedidos.
     Baseado na sua fórmula: Risk = (dias_sem_pedir / freq_média) * (1 - valor_último/valor_médio)
     """
+    # A query foi reescrita para ser compatível com as regras do GROUP BY do Postgres.
     query = """
-    WITH customer_stats AS (
+    WITH ranked_orders AS (
+        -- Primeiro, ranqueamos os pedidos de cada cliente do mais novo para o mais antigo
         SELECT
             cliente_id,
-            COUNT(id) AS total_pedidos,
+            valor_total,
+            created_at,
+            ROW_NUMBER() OVER(PARTITION BY cliente_id ORDER BY created_at DESC) as rn
+        FROM "Pedidos_Unificados"
+    ),
+    customer_stats AS (
+        -- Agora, agregamos os dados e pegamos o valor do último pedido (onde rn = 1)
+        SELECT
+            cliente_id,
+            COUNT(cliente_id) AS total_pedidos,
             AVG(valor_total) AS valor_medio,
             MAX(created_at) AS ultimo_pedido_data,
-            -- Calcula a frequência média em dias
             EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) / 86400 / NULLIF(COUNT(id) - 1, 0) AS freq_media_dias,
-            -- Pega o valor do último pedido usando uma window function
-            FIRST_VALUE(valor_total) OVER(PARTITION BY cliente_id ORDER BY created_at DESC) as valor_ultimo_pedido
-        FROM "Pedidos_Unificados"
+            MAX(CASE WHEN rn = 1 THEN valor_total ELSE NULL END) as valor_ultimo_pedido
+        FROM ranked_orders
         GROUP BY cliente_id
     ),
     final_risk AS (
@@ -167,19 +176,17 @@ def get_churn_prediction():
             cs.total_pedidos,
             cs.valor_medio,
             cs.ultimo_pedido_data,
-            -- Calcula os dias desde o último pedido
             EXTRACT(EPOCH FROM (NOW() - cs.ultimo_pedido_data)) / 86400 AS dias_sem_pedir,
             cs.freq_media_dias,
             cs.valor_ultimo_pedido,
-            -- Aplica a sua fórmula
+            -- Aplicamos a sua fórmula
             (EXTRACT(EPOCH FROM (NOW() - cs.ultimo_pedido_data)) / 86400 / cs.freq_media_dias)
             *
             (1 - (cs.valor_ultimo_pedido / cs.valor_medio))
             AS risk_score
         FROM customer_stats cs
         JOIN "Clientes_Unificados" uc ON uc.id = cs.cliente_id
-        -- A fórmula só faz sentido para clientes com pelo menos 2 pedidos (para ter frequência)
-        WHERE cs.total_pedidos > 1 AND cs.freq_media_dias > 0
+        WHERE cs.total_pedidos > 1 AND cs.freq_media_dias > 0 AND cs.valor_medio > 0
     )
     SELECT
         cliente_id,
@@ -193,7 +200,6 @@ def get_churn_prediction():
         valor_ultimo_pedido::float,
         risk_score::float
     FROM final_risk
-    -- Filtra por risco > 0.7 como você sugeriu e ordena do maior para o menor risco
     WHERE risk_score > 0.7
     ORDER BY risk_score DESC;
     """
