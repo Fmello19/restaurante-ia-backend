@@ -42,7 +42,7 @@ def get_clientes():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor) # Retorna como dicionário
-        cursor.execute("SELECT id, nome, telefone, created_at FROM Clientes_Unificados ORDER BY created_at DESC LIMIT 10;")
+        cursor.execute("SELECT id, nome, telefone, created_at FROM \"Clientes_Unificados\" ORDER BY created_at DESC LIMIT 10;")
         clientes = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -51,3 +51,4 @@ def get_clientes():
         # Se algo der errado, retorna uma mensagem de erro clara.
 
         return {"erro": f"Não foi possível conectar ou buscar no banco de dados: {e}"}
+
