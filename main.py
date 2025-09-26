@@ -164,29 +164,21 @@ def get_churn_prediction():
 def get_ltv_ranking():
     """
     Calcula e retorna o ranking de clientes por Lifetime Value (LTV).
-    LTV = (Ticket_Médio × Freq_Mensal × Margem) / Churn_Rate
     """
-    # A query SQL faz a maior parte do trabalho pesado de calcular as métricas base.
     query = """
     WITH customer_lifetime_stats AS (
         SELECT
             cliente_id,
             COUNT(id) as total_pedidos,
             AVG(valor_total) as ticket_medio,
-            -- Calcula o tempo de vida do cliente em dias, entre o primeiro e o último pedido.
             NULLIF(EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) / 86400, 0) as lifetime_em_dias
         FROM "Pedidos_Unificados"
         GROUP BY cliente_id
-        -- O LTV é mais significativo para clientes com mais de um pedido.
         HAVING COUNT(id) > 1
     ),
     ltv_components AS (
         SELECT
-            cls.cliente_id,
-            uc.nome,
-            uc.telefone,
-            cls.ticket_medio,
-            -- Calcula a frequência mensal com base no tempo de vida e no total de pedidos.
+            cls.cliente_id, uc.nome, uc.telefone, cls.ticket_medio,
             (cls.total_pedidos / cls.lifetime_em_dias) * 30 AS freq_mensal,
             cls.total_pedidos
         FROM customer_lifetime_stats cls
@@ -194,31 +186,88 @@ def get_ltv_ranking():
         WHERE cls.lifetime_em_dias IS NOT NULL AND cls.lifetime_em_dias > 0
     )
     SELECT
-        cliente_id,
-        nome,
-        telefone,
-        total_pedidos,
-        ticket_medio::float,
-        freq_mensal::float,
-        -- Aplica a fórmula final do LTV com as constantes de negócio.
+        cliente_id, nome, telefone, total_pedidos, ticket_medio::float, freq_mensal::float,
         (ticket_medio * freq_mensal * %(margem)s) / %(churn_rate)s AS ltv
     FROM ltv_components
     ORDER BY ltv DESC
-    LIMIT 50; -- Limita aos 50 melhores clientes para performance.
+    LIMIT 50;
     """
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # Passa as constantes para a query de forma segura.
-            params = {
-                "margem": MARGEM_LUCRO_PADRAO,
-                "churn_rate": CHURN_RATE_MENSAL_PADRAO
-            }
+            params = { "margem": MARGEM_LUCRO_PADRAO, "churn_rate": CHURN_RATE_MENSAL_PADRAO }
             cursor.execute(query, params)
             ranking_ltv = cursor.fetchall()
         return {"ranking_ltv": ranking_ltv}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao calcular o LTV: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/insights/market-basket")
+def get_market_basket_analysis():
+    """
+    Realiza a Análise de Cesta de Mercado para encontrar associações de produtos.
+    Retorna pares de produtos com as métricas de Suporte, Confiança e Lift.
+    """
+    # Esta query é o coração da análise.
+    query = """
+    WITH 
+    -- 1. Contar a frequência de cada item individualmente
+    item_counts AS (
+        SELECT
+            nome_produto,
+            COUNT(DISTINCT pedido_id) AS total_pedidos_com_item
+        FROM "Itens_Pedido"
+        GROUP BY nome_produto
+    ),
+    -- 2. Encontrar pares de itens que aparecem no mesmo pedido
+    pair_counts AS (
+        SELECT
+            i1.nome_produto AS item_a,
+            i2.nome_produto AS item_b,
+            COUNT(DISTINCT i1.pedido_id) AS total_pedidos_com_par
+        FROM "Itens_Pedido" i1
+        JOIN "Itens_Pedido" i2 ON i1.pedido_id = i2.pedido_id AND i1.nome_produto < i2.nome_produto
+        GROUP BY i1.nome_produto, i2.nome_produto
+    ),
+    -- 3. Contar o total de pedidos no período (ex: últimos 90 dias)
+    total_orders AS (
+        SELECT COUNT(DISTINCT id) AS total_geral_pedidos
+        FROM "Pedidos_Unificados"
+        WHERE created_at > NOW() - INTERVAL '90 days'
+    )
+    -- 4. Calcular as métricas finais
+    SELECT
+        pc.item_a,
+        pc.item_b,
+        pc.total_pedidos_com_par,
+        -- Suporte: Quão frequente é o par em todos os pedidos?
+        (pc.total_pedidos_com_par::float / NULLIF(to.total_geral_pedidos, 0)) AS suporte,
+        -- Confiança: Se comprou A, qual a chance de comprar B?
+        (pc.total_pedidos_com_par::float / NULLIF(ic_a.total_pedidos_com_item, 0)) AS confianca_a_b,
+        -- Lift: A compra de A aumenta a probabilidade de comprar B?
+        ((pc.total_pedidos_com_par::float / NULLIF(to.total_geral_pedidos, 0)) / 
+         (NULLIF(ic_a.total_pedidos_com_item, 0)::float / NULLIF(to.total_geral_pedidos, 0)) *
+         (NULLIF(ic_b.total_pedidos_com_item, 0)::float / NULLIF(to.total_geral_pedidos, 0))) AS lift
+    FROM pair_counts pc
+    JOIN item_counts ic_a ON pc.item_a = ic_a.nome_produto
+    JOIN item_counts ic_b ON pc.item_b = ic_b.nome_produto
+    CROSS JOIN total_orders to
+    -- Filtramos para resultados mais relevantes para evitar ruído
+    WHERE pc.total_pedidos_com_par > 1 -- O par precisa ter aparecido mais de uma vez
+    ORDER BY lift DESC, confianca_a_b DESC
+    LIMIT 50; -- Retorna os 50 pares mais interessantes
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(query)
+            associacoes = cursor.fetchall()
+        return {"associacoes_de_produtos": associacoes}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao calcular a Análise de Cesta de Mercado: {e}")
     finally:
         if conn:
             conn.close()
