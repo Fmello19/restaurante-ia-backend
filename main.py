@@ -238,15 +238,14 @@ def get_market_basket_analysis():
         pc.item_a,
         pc.item_b,
         pc.total_pedidos_com_par,
-        (pc.total_pedidos_com_par::float / NULLIF(to.total_geral_pedidos, 0)) AS suporte,
+        (pc.total_pedidos_com_par::float / NULLIF(totals.total_geral_pedidos, 0)) AS suporte,
         (pc.total_pedidos_com_par::float / NULLIF(ic_a.total_pedidos_com_item, 0)) AS confianca_a_b,
-        -- Fórmula do Lift simplificada e corrigida para evitar erros de precedência e sintaxe
-        (pc.total_pedidos_com_par::float * to.total_geral_pedidos) / 
+        (pc.total_pedidos_com_par::float * totals.total_geral_pedidos) / 
             NULLIF((ic_a.total_pedidos_com_item::float * ic_b.total_pedidos_com_item::float), 0) AS lift
     FROM pair_counts pc
     JOIN item_counts ic_a ON pc.item_a = ic_a.nome_produto
     JOIN item_counts ic_b ON pc.item_b = ic_b.nome_produto
-    CROSS JOIN total_orders to
+    CROSS JOIN total_orders AS totals -- Renomeado o alias de 'to' para 'totals'
     WHERE pc.total_pedidos_com_par > 1
     ORDER BY lift DESC, confianca_a_b DESC
     LIMIT 50;
